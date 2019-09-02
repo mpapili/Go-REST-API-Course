@@ -5,8 +5,6 @@ import (
 	"log"
 	"net/http"
 	"os"
-	"reflect"
-	"strconv"
 
 	"github.com/gorilla/mux"
 	"github.com/lib/pq"
@@ -90,32 +88,33 @@ func getBooks(w http.ResponseWriter, r *http.Request) {
 
 func getBook(w http.ResponseWriter, r *http.Request) {
 
-	log.Println("Get single book is called")
+	var book Book // single book is of type book
+
 	params := mux.Vars(r)
-	log.Println(params)
 
-	reflect.TypeOf(params["id"])
-
-	for _, book := range books {
-		id_as_int, err := strconv.Atoi(params["id"])
-		if err != nil {
-			panic("could not cast ID to integer")
-		}
-		if book.ID == id_as_int {
-			json.NewEncoder(w).Encode(&book)
-		}
-	}
+	// parameterized query to get book with matching id
+	row := db.QueryRow("SELECT * FROM books WHERE id=$1", params["id"])
+	err := row.Scan(&book.ID, &book.Title, &book.Author, &book.Year)
+	checkErr(err)
+	json.NewEncoder(w).Encode(book)
 }
 
 func addBook(w http.ResponseWriter, r *http.Request) {
 
-	var book Book                         // new blank book object to be where r.Body is decoded
-	json.NewDecoder(r.Body).Decode(&book) // decode request-body into book
-	books = append(books, book)           // add books to book
+	var book Book
+	var bookID int
 
-	// response to client with encoded json of books slice
-	json.NewEncoder(w).Encode(books)
-	log.Println("add book is called")
+	// decode json body into "book" type object's address
+	err := json.NewDecoder(r.Body).Decode(&book)
+	checkErr(err)
+	log.Println(book)
+
+	err = db.QueryRow("INSERT INTO books (title, author, year) values ($1, $2, $3) RETURNING id;",
+		book.Title, book.Author, book.Year).Scan(&bookID)
+	// we create a book in the DB and return "ID" which we ".Scan()" to the
+	// address of our bookID integer
+	checkErr(err)
+	json.NewEncoder(w).Encode(bookID)
 }
 
 func updateBook(w http.ResponseWriter, r *http.Request) {
@@ -123,32 +122,22 @@ func updateBook(w http.ResponseWriter, r *http.Request) {
 	var book Book
 	json.NewDecoder(r.Body).Decode(&book) // "book" becomes PUT book
 
-	// replace book with matching ID with our new book
-	for i, item := range books {
-		if item.ID == book.ID {
-			books[i] = book
-		}
-	}
-	// return books slice
-	json.NewEncoder(w).Encode(books)
-	log.Println("update book is called")
+	result, err := db.Exec("UPDATE books SET title=$1, author=$2, year=$3 WHERE id=$4 RETURNING id",
+		&book.Title, &book.Author, &book.Year, &book.ID)
+	checkErr(err)
+	rowsUpdated, err := result.RowsAffected() // see which rows were effected
+	checkErr(err)
+	json.NewEncoder(w).Encode(rowsUpdated)
 }
 
 func removeBook(w http.ResponseWriter, r *http.Request) {
 	log.Println("remove book is called")
 	// get our query params
 	params := mux.Vars(r)
-	id_as_int, err := strconv.Atoi(params["id"])
+	result, err := db.Exec("DELETE from books WHERE id = $1", params["id"])
+	checkErr(err)
+	rowsDeleted, err := result.RowsAffected()
 
-	if err != nil {
-		panic("could not cast id to integer")
-	}
+	json.NewEncoder(w).Encode(rowsDeleted)
 
-	for i, item := range books {
-		if item.ID == id_as_int {
-			// everything up to index i + everything beyond index i
-			books = append(books[:i], books[i+1:]...)
-		}
-	}
-	json.NewEncoder(w).Encode(books)
 }
