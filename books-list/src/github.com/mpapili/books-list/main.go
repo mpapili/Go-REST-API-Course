@@ -4,10 +4,15 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"os"
 	"reflect"
 	"strconv"
 
 	"github.com/gorilla/mux"
+	"github.com/lib/pq"
+	"github.com/subosito/gotenv"
+
+	"database/sql"
 )
 
 type Book struct {
@@ -18,11 +23,34 @@ type Book struct {
 }
 
 var books []Book
+var db *sql.DB
+
+func init() {
+	gotenv.Load() // load env variables in ".env" hidden file
+}
+
+func checkErr(err error) {
+	// if error is not nill, log fatal error
+	if err != nil {
+		log.Fatal(err)
+	}
+}
 
 func main() {
 
-	books = append(books, Book{ID: 1, Title: "Golang Pointers", Author: "Mr. Golang", Year: "2020"},
-		Book{ID: 2, Title: "the adventuers of mike", Author: "Mike", Year: "1992"})
+	/*
+		books = append(books, Book{ID: 1, Title: "Golang Pointers", Author: "Mr. Golang", Year: "2020"},
+			Book{ID: 2, Title: "the adventuers of mike", Author: "Mike", Year: "1992"})
+	*/
+
+	pgUrl, err := pq.ParseURL(os.Getenv("ELEPHANTSQL_URL"))
+	checkErr(err)
+
+	log.Println(pgUrl)
+
+	db, err = sql.Open("postgres", pgUrl)
+	checkErr(err)
+	db.Ping() // returns nothing if successful
 
 	// create a new mux router object
 	router := mux.NewRouter()
@@ -39,7 +67,24 @@ func main() {
 
 func getBooks(w http.ResponseWriter, r *http.Request) {
 
-	log.Println("Get all books is called")
+	var book Book // single book is of type book
+	books = []Book{}
+
+	rows, err := db.Query("SELECT * FROM books")
+	checkErr(err)
+	defer rows.Close() // close rows once this function is done
+
+	for rows.Next() {
+		/*
+			map fields to book object
+			each value is given an address
+			(the args we pass in) where it is
+			assigned
+		*/
+		err := rows.Scan(&book.ID, &book.Title, &book.Author, &book.Year)
+		checkErr(err)
+		books = append(books, book)
+	}
 	json.NewEncoder(w).Encode(books)
 }
 
